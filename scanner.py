@@ -1,21 +1,40 @@
 import socket
 import json
+import time
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
-def scan_port(host, port):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(1)
+def scan_port(host, port, timeout):
+    start = time.perf_counter()
 
-        result = sock.connect_ex((host, port))
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            sock.connect((host, port))
 
-        if result == 0:
-            print(f"[OPEN] {host}:{port}")
-            return port
-        else:
-            print(f"[NOT OPEN] {host}:{port}")
-            return None
+        duration = time.perf_counter() - start
+
+        print(f"[OPEN] {host}:{port} - {duration:.3f}s")
+        return port
+
+    except ConnectionRefusedError:
+        duration = time.perf_counter() - start
+
+        print(f"[CLOSED] {host}:{port} - {duration:.3f}s")
+        return None
+
+    except socket.timeout:
+        duration = time.perf_counter() - start
+
+        print(f"[TIMEOUT] {host}:{port} - {duration:.3f}s")
+        return None
+
+    except OSError as error:
+        duration = time.perf_counter() - start
+
+        print(f"[ERROR] {host}:{port} - {error} - {duration:.3f}s")
+        return None
 
 
 def save_results(host, start_port, end_port, open_ports):
@@ -38,9 +57,14 @@ def main():
     try:
         start_port = int(input("Enter start port: "))
         end_port = int(input("Enter end port: "))
+        timeout = float(input("Enter timeout (seconds): "))
 
         if not (1 <= start_port <= end_port <= 65535):
             print("Error: Invalid port range.")
+            return
+
+        if not (0.1 <= timeout <= 10):
+            print("Error: Timeout must be between 0.1 and 10 seconds.")
             return
 
         try:
@@ -56,10 +80,11 @@ def main():
         open_ports = []
 
         print(f"\nStarting scan on {host}...\n")
+        start_time = time.perf_counter()
 
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        with ThreadPoolExecutor(max_workers=20) as executor:
             futures = [
-                executor.submit(scan_port, host, port)
+                executor.submit(scan_port, host, port, timeout)
                 for port in range(start_port, end_port + 1)
             ]
 
@@ -70,6 +95,11 @@ def main():
                     open_ports.append(result)
 
         open_ports.sort()
+        end_time = time.perf_counter()
+
+        scan_duration = end_time - start_time
+
+        print(f"\nScan completed in {scan_duration:.2f} seconds")
 
         print("\nScan finished")
 
