@@ -1,6 +1,7 @@
-import socket
 import json
 import time
+import math
+import socket
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -13,36 +14,32 @@ def scan_port(host, port, timeout):
             sock.settimeout(timeout)
             sock.connect((host, port))
 
-        duration = time.perf_counter() - start
-
-        print(f"[OPEN] {host}:{port} - {duration:.3f}s")
-        return port
+        status = "OPEN"
 
     except ConnectionRefusedError:
-        duration = time.perf_counter() - start
-
-        print(f"[CLOSED] {host}:{port} - {duration:.3f}s")
-        return None
+        status = "CLOSED"
 
     except socket.timeout:
-        duration = time.perf_counter() - start
-
-        print(f"[TIMEOUT] {host}:{port} - {duration:.3f}s")
-        return None
+        status = "TIMEOUT"
 
     except OSError as error:
-        duration = time.perf_counter() - start
+        status = f"ERROR: {error}"
 
-        print(f"[ERROR] {host}:{port} - {error} - {duration:.3f}s")
-        return None
+    duration = time.perf_counter() - start
+
+    print(f"[{status}] {host}:{port} - {duration:.3f}s")
+
+    return {"port": port, "status": status, "duration": round(duration, 3)}
 
 
-def save_results(host, start_port, end_port, open_ports):
+def save_results(host, start_port, end_port, timeout, scan_duration, results):
     data = {
         "host": host,
         "start_port": start_port,
         "end_port": end_port,
-        "open_ports": open_ports,
+        "timeout": timeout,
+        "scan_duration": round(scan_duration, 3),
+        "results": results,
     }
 
     with open("scan_results.json", "w", encoding="utf-8") as file:
@@ -63,26 +60,27 @@ def main():
             print("Error: Invalid port range.")
             return
 
-        if not (0.1 <= timeout <= 10):
+        if not (math.isfinite(timeout) and 0.1 <= timeout <= 10):
             print("Error: Timeout must be between 0.1 and 10 seconds.")
             return
 
         try:
             socket.inet_pton(socket.AF_INET, host)
-
         except OSError:
             print("Error: Please enter a valid IPv4 address.")
             return
 
         if end_port - start_port + 1 > 1024:
             print("Error: Scan range cannot exceed 1024 ports.")
+            return
 
-        open_ports = []
+        results = []
 
         print(f"\nStarting scan on {host}...\n")
+
         start_time = time.perf_counter()
 
-        with ThreadPoolExecutor(max_workers=20) as executor:
+        with ThreadPoolExecutor(max_workers=10) as executor:
             futures = [
                 executor.submit(scan_port, host, port, timeout)
                 for port in range(start_port, end_port + 1)
@@ -90,26 +88,23 @@ def main():
 
             for future in as_completed(futures):
                 result = future.result()
+                results.append(result)
 
-                if result is not None:
-                    open_ports.append(result)
+        results.sort(key=lambda item: item["port"])
 
-        open_ports.sort()
         end_time = time.perf_counter()
-
         scan_duration = end_time - start_time
 
         print(f"\nScan completed in {scan_duration:.2f} seconds")
+        print("\nScan finished.")
 
-        print("\nScan finished")
-
-        save_results(host, start_port, end_port, open_ports)
+        save_results(host, start_port, end_port, timeout, scan_duration, results)
 
     except ValueError:
-        print("Error: Please enter a valid port number.")
+        print("Error: Please enter valid port numbers or timeout.")
 
     except (OSError, TimeoutError) as error:
-        print(f"Network error or file error: {error}")
+        print(f"Network or file error: {error}")
 
 
 if __name__ == "__main__":
